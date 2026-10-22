@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Book Outlet</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f5f5f7; color: #1d1d1f; }
+    main { max-width: 760px; margin: 2rem auto; background: white; border-radius: 12px; padding: 1.25rem 1.5rem; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; margin: 0; }
+    .controls { display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+    .controls input[type="text"] { flex: 1; min-width: 200px; padding: 0.5rem; border: 1px solid #ccc; border-radius: 8px; font: inherit; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; }
+    .card { border: 1px solid #e0e0e0; border-radius: 12px; padding: 0.75rem; }
+    .card h2 { font-size: 0.95rem; margin: 0 0 0.15rem; }
+    .author { color: #666; font-size: 0.85rem; margin-bottom: 0.6rem; }
+    .meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
+    .badge { background: #fdf0c8; color: #6b4a00; padding: 2px 8px; border-radius: 8px; font-size: 0.75rem; }
+    #message { color: #a32d2d; margin: 0.5rem 0; }
+    .pager { display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem; font-size: 0.9rem; }
+    .pager button { padding: 0.4rem 1rem; border: 1px solid #ccc; border-radius: 8px; background: white; font: inherit; cursor: pointer; }
+    .pager button:disabled { opacity: 0.4; cursor: default; }
+    [hidden] { display: none !important; }
+    #auth { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; }
+    #auth button, .panel button { padding: 0.4rem 0.9rem; border: 1px solid #ccc; border-radius: 8px; background: white; font: inherit; cursor: pointer; }
+    .panel { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem; background: #f7f7f9; border-radius: 8px; }
+    .panel input, .panel select { padding: 0.4rem; border: 1px solid #ccc; border-radius: 8px; font: inherit; }
+    .panel .note { font-size: 0.85rem; }
+    .error { color: #a32d2d; }
+    .ok { color: #1d6b3a; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Book Outlet</h1>
+      <div id="auth"></div>
+    </header>
+
+    <form id="loginForm" class="panel" hidden>
+      <input id="loginUser" type="text" placeholder="Username" required>
+      <input id="loginPass" type="password" placeholder="Password" required>
+      <button>Log in</button>
+      <span id="loginError" class="note error"></span>
+    </form>
+
+    <form id="addForm" class="panel" hidden>
+      <input id="newTitle" type="text" placeholder="Book title" required>
+      <select id="newRating">
+        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+        <option value="4" selected>4</option><option value="5">5</option>
+      </select>
+      <button>Add book</button>
+      <span id="addMessage" class="note"></span>
+    </form>
+
+    <div class="controls">
+      <input id="search" type="text" placeholder="Search by title or author">
+      <label><input id="bestsellers" type="checkbox"> Bestsellers only</label>
+    </div>
+
+    <p id="message"></p>
+    <div id="books" class="grid"></div>
+
+    <div class="pager">
+      <button id="prev">Previous</button>
+      <span id="pageInfo"></span>
+      <button id="next">Next</button>
+    </div>
+  </main>
+
+  <script>
+    const API = "http://127.0.0.1:8001";
+
+    const searchBox = document.getElementById("search");
+    const bestsellersBox = document.getElementById("bestsellers");
+    const booksEl = document.getElementById("books");
+    const messageEl = document.getElementById("message");
+    const prevButton = document.getElementById("prev");
+    const nextButton = document.getElementById("next");
+    const pageInfo = document.getElementById("pageInfo");
+
+    let page = 1;
+
+    const authEl = document.getElementById("auth");
+    const loginForm = document.getElementById("loginForm");
+    const loginUser = document.getElementById("loginUser");
+    const loginPass = document.getElementById("loginPass");
+    const loginError = document.getElementById("loginError");
+    const addForm = document.getElementById("addForm");
+    const newTitle = document.getElementById("newTitle");
+    const newRating = document.getElementById("newRating");
+    const addMessage = document.getElementById("addMessage");
+
+    // The token is kept in the browser's storage so it survives a page reload.
+    let token = localStorage.getItem("token");
+    let username = localStorage.getItem("username");
+
+    function updateAuthUI() {
+      authEl.replaceChildren();
+      if (token) {
+        const who = document.createElement("span");
+        who.textContent = `Logged in as ${username}`;
+        const logoutButton = document.createElement("button");
+        logoutButton.textContent = "Log out";
+        logoutButton.addEventListener("click", logout);
+        authEl.append(who, logoutButton);
+        loginForm.hidden = true;
+        addForm.hidden = false;
+      } else {
+        const loginButton = document.createElement("button");
+        loginButton.textContent = "Login";
+        loginButton.addEventListener("click", () => { loginForm.hidden = !loginForm.hidden; });
+        authEl.append(loginButton);
+        addForm.hidden = true;
+      }
+    }
+
+    function logout() {
+      token = null;
+      username = null;
+      localStorage.removeItem("token");
+      localStorage.removeItem("username");
+      updateAuthUI();
+    }
+
+    // Step 1 of the flow: swap username + password for a token.
+    async function login(event) {
+      event.preventDefault();
+      loginError.textContent = "";
+      const response = await fetch(`${API}/api/token/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser.value, password: loginPass.value }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        loginError.textContent = (data.non_field_errors && data.non_field_errors[0]) || "Login failed";
+        return;
+      }
+      token = data.token;
+      username = loginUser.value;
+      localStorage.setItem("token", token);
+      localStorage.setItem("username", username);
+      loginPass.value = "";
+      updateAuthUI();
+    }
+
+    // Step 2: send the token in the header with a request that changes data.
+    async function addBook(event) {
+      event.preventDefault();
+      addMessage.className = "note";
+      addMessage.textContent = "";
+      const response = await fetch(`${API}/api/books/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Token ${token}` },
+        body: JSON.stringify({ title: newTitle.value, rating: Number(newRating.value) }),
+      });
+      if (response.status === 401) {
+        logout();
+        loginError.textContent = "Your login is no longer valid. Please log in again.";
+        loginForm.hidden = false;
+        return;
+      }
+      const data = await response.json();
+      if (!response.ok) {
+        addMessage.className = "note error";
+        addMessage.textContent = Object.entries(data).map(([field, problems]) => `${field}: ${problems}`).join(" | ");
+        return;
+      }
+      addMessage.className = "note ok";
+      addMessage.textContent = `Added "${data.title}".`;
+      newTitle.value = "";
+      searchBox.value = data.title;   // show the new book in the list
+      page = 1;
+      loadBooks();
+    }
+
+    async function loadBooks() {
+      const params = new URLSearchParams();
+      if (searchBox.value.trim()) params.set("search", searchBox.value.trim());
+      if (bestsellersBox.checked) params.set("bestselling", "true");
+      params.set("page", page);
+
+      messageEl.textContent = "";
+      try {
+        const response = await fetch(`${API}/api/books/?${params}`);
+        if (!response.ok) throw new Error(`The API answered ${response.status}`);
+        const data = await response.json();
+        render(data.results);
+        prevButton.disabled = data.previous === null;
+        nextButton.disabled = data.next === null;
+        pageInfo.textContent = `Page ${page} (${data.count} books)`;
+      } catch (error) {
+        booksEl.replaceChildren();
+        messageEl.textContent = `Couldn't load books. ${error.message}`;
+        console.error(error);
+      }
+    }
+
+    function render(books) {
+      booksEl.replaceChildren();
+      if (books.length === 0) {
+        messageEl.textContent = "No books match your search.";
+        return;
+      }
+      for (const book of books) {
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const title = document.createElement("h2");
+        title.textContent = book.title;
+
+        const author = document.createElement("div");
+        author.className = "author";
+        author.textContent = book.author_name || "Unknown author";
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        const rating = document.createElement("span");
+        rating.textContent = `Rating ${book.rating}/5`;
+        meta.append(rating);
+        if (book.is_bestselling) {
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "Bestseller";
+          meta.append(badge);
+        }
+
+        card.append(title, author, meta);
+        booksEl.append(card);
+      }
+    }
+
+    let timer;
+    searchBox.addEventListener("input", () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { page = 1; loadBooks(); }, 250);
+    });
+    bestsellersBox.addEventListener("change", () => { page = 1; loadBooks(); });
+    prevButton.addEventListener("click", () => { page -= 1; loadBooks(); });
+    nextButton.addEventListener("click", () => { page += 1; loadBooks(); });
+    loginForm.addEventListener("submit", login);
+    addForm.addEventListener("submit", addBook);
+
+    updateAuthUI();
+
+    loadBooks();
+  </script>
+</body>
+</html>
